@@ -1,51 +1,47 @@
 # A small DNS control plane for creator downloads
 
-I put this together around a creator admin screen that needs one concrete action: point `downloads.example.com` at the delivery service, then read the resulting zone records. Infrai keeps that flow to one key and one HTTP interface, so the service stays small enough to understand while I ship a side project. Having fought OTP delivery gaps and SMS rate limits, I prefer boundaries that don't surprise me.
+I put this example around a creator admin screen with one concrete job: point `downloads.example.com` at the delivery service, then read back the zone records. Infrai keeps that path on one key and one HTTP interface, which is exactly the kind of boundary I want when I am trying to ship a side project without dragging in a lot of provider glue.
 
 ## The decision I made
 
-I considered two options. Calling each registrar directly gives access to provider-specific features, but it makes the admin UI carry several authentication models and several record schemas. A single DNS service gives me one request shape and keeps the provider choice behind the service boundary. I chose the second option for this sample because the business decision is about a creator's delivery hostname, not about which registrar happens to hold the zone.
+I looked at two approaches. Calling each registrar directly gives you every provider-specific feature, but then the admin UI has to deal with multiple auth models and multiple record shapes. Using a single DNS service means one request format, while the provider choice stays behind the service boundary. For this sample, I picked the second option because the product decision is about a creator's delivery hostname, not about which registrar currently hosts the zone.
 
-The important ordering is deliberate: fetch the zone first, take its returned `zone_id`, then upsert the record. Record calls never use the domain string as their primary key. SPF and DMARC would be TXT records, and only MX records receive `priority`; those rules belong in the form validation layer when the UI grows beyond the delivery CNAME shown here.
+The ordering here is intentional: fetch the zone first, take the returned `zone_id`, then upsert the record. Record operations do not use the domain string as the primary key. SPF and DMARC would be TXT records, and only MX records should get `priority`; that logic belongs in request validation once the UI grows past the delivery CNAME shown here.
 
-The same boundary is where I would attach subscriber updates and content-processing state. After DNS records are written, the email-domain verification and DKIM rotation belong to the email capability, using the same environment key. I leave those calls out of this runnable slice because this repository's observable workflow is the DNS record transition. In deliverability work, keeping DKIM separate from the DNS UI avoids accidental mail failures.
+That same boundary is also where I would hang subscriber updates and content-processing state. Once DNS records are in place, email-domain verification and DKIM rotation should move through the email capability using the same environment key. I left those calls out of this runnable slice because the observable workflow in this repo is the DNS record change itself.
 
 ## What is actually runnable
 
-`src/creator_dns_admin.ts` contains the thin client and the domain workflow. It decodes the response envelope before considering the HTTP status, surfaces business errors, and backs off on a 429 response. The command reads `INFRAI_API_KEY` and `CREATOR_DOMAIN`, looks up the zone, performs an upsert, and prints the returned result.
+`src/creator_dns_admin.ts` holds the thin client and the domain workflow. It unwraps the response envelope before trusting the HTTP status, surfaces business-level errors, and backs off on 429s. The command reads `INFRAI_API_KEY` and `CREATOR_DOMAIN`, looks up the zone, performs an upsert, and prints the returned result.
 
-I kept the write deterministic: the delivery hostname is always represented by the same CNAME record, so rerunning the command converges on the intended state. The request body uses only the record fields needed by the DNS API. Minimal payloads also help when you're staring down a rate limit.
+I kept the write path deterministic. The delivery hostname is always expressed as the same CNAME record, so rerunning the command converges on the target state. The request body includes only the fields the DNS API actually needs.
 
 ## Try the workflow
 
 Install the declared development dependencies, then run:
 
-```
 ```sh
 npm install
 INFRAI_API_KEY=your-key CREATOR_DOMAIN=example.com npm start
 ```
-```
 
-The expected output is a JSON object containing the returned `zone_id` and the upsert result. The focused test exercises the business decision rather than only checking that a helper exists:
+The expected output is a JSON object with the returned `zone_id` and the upsert result. The focused test checks the business decision, not just that some helper function exists:
 
-```
 ```sh
 npm test
-```
 ```
 
 It takes `example.com` as input and expects a `downloads` CNAME pointing at `delivery.example.com` with TTL `300`.
 
 ## Why the code is intentionally narrow
 
-This is an architecture record expressed as a runnable path, not a full registrar dashboard. The next UI step would validate `record_type`, `name`, and `content` with zod at the request boundary, then route create, update, list, and delete actions through the same client. The current file keeps the first shipping slice visible: resolve a zone, publish delivery DNS, and return the service result.
+This is an architecture record expressed as a runnable path, not a full registrar dashboard. The next UI step would validate `record_type`, `name`, and `content` with zod at the request boundary, then send create, update, list, and delete actions through the same client. The current file keeps the first shipping slice obvious: resolve a zone, publish the delivery DNS record, and return the service result.
 
-I spent an afternoon on the first version and kept the final pass to a few focused files. That trade-off is the point of the example: a full admin product can grow around a boundary that is already typed and explicit. Compliance audits get easier when the DNS change is isolated like this.
+I spent an afternoon on the first pass and kept the final cleanup to a few focused files. That trade-off is the point of the example. A larger admin product can grow around a boundary that is already typed, explicit, and easy to reason about.
 
 ## Production notes: Creator DNS Control Plane
 
-That's the minimal version. Before running this for real: The details below apply to Creator DNS Control Plane.
+That is the minimal version. Before you run it for real, these details apply to Creator DNS Control Plane.
 
 **Account & key**
 
